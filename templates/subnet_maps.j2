@@ -1,0 +1,19 @@
+{% set public="" %}
+{% set private="" %}
+{% set rds="" %}
+{% for j in vpc.subnets %} 
+{% if j.resource_tags['Stack'] == 'Public' %}
+{% set public = public + j.id + ","%}
+{% endif %}
+{% if j.resource_tags['Stack'] == 'Private' %}
+{% set private = private + j.id + ',' %}
+{% endif %}
+{% if j.resource_tags['Stack'] == 'RDS DB Subnet' %}
+{% set rds = rds + j.id + ',' %}
+{% endif %}
+{% if loop.last %}
+{{ 'public: "' + public[:-1] + '"' }}
+{{ 'private: "' + private[:-1] + '"' }}
+{{ 'rds: "' + rds[:-1] + '"' }}
+{% endif %}
+{% endfor %}
