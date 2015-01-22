@@ -1,0 +1,232 @@
+---
+# The playbook to provision vpc with a public subnet, private subnet and rds subnet and their instances.
+# http://docs.ansible.com/wait_for_module.html
+# http://docs.ansible.com/add_host_module.html
+# http://docs.ansible.com/add_host_module.html
+
+- hosts: localhost
+  vars:
+   environ: opstesting
+  tasks:
+  
+   - name: Include the variables specific to the vpc
+     include_vars: envs/{{ environ }}
+   
+   - name: Create the VPC 
+     local_action:
+        module: ec2_vpc
+        state: present
+        region: "{{ ec2_region }}"
+        resource_tags:
+            Name: "OPSTesting Purpose Only"
+            Environment: "{{ environ }}"
+        cidr_block: "{{ vpc_cidr_block }}"
+        subnets: "{{ vpc_subnets }}"
+        dns_support: true
+        dns_hostnames: true
+        internet_gateway: "{{ vpc_internet_gateway|string }}"
+        route_tables: "{{ vpc_route_tables_public }}"
+        wait: yes
+     register: vpc
+   
+   - set_fact:
+      maps: "{{ lookup('template', 'templates/subnet_maps.j2')|from_yaml }}"
+
+   - name: Create the security group for the VPC
+     ec2_group:
+       name: "{{ item.name }}"
+       description: "{{ item.desc }}"
+       vpc_id: "{{ vpc.vpc_id }}"
+       region: "{{ ec2_region }}"
+       rules: "{{ item.rules }}"
+     with_items: vpc_security_groups
+     register: sec_groups
+
+
+   - name: Create the rds subnet group
+     rds_subnet_group:
+      state: present
+      region: "{{ ec2_region }}"
+      name: "{{ rds_subnet_name }}"
+      description: "{{ rds_subnet_description }}"
+      subnets: "{{ maps['rds'].split(',') }}"
+   
+
+   - name: Create the Internet Facing LoadBalancer with connection draining and cross availability
+     ec2_elb_lb:
+      state: present
+      cross_az_load_balancing: "{{ vpc_pub_lb_cross_az_lb }}"
+      connection_draining_timeout: "{{ vpc_pub_lb_con_draining }}"
+      name: "{{ vpc_pub_lb_name }}"
+      subnets: "{{ maps['public'].split(',') }}"
+      security_group_ids: "{{ sec_groups.results[0].group_id }}"
+      listeners: "{{ vpc_pub_lb_listeners }}"
+      health_check: "{{ vpc_pub_lb_health_check }}"
+      region: "{{ ec2_region }}"
+     register: lb
+   
+ 
+#   - name: Create the master RDS instance 
+#     rds:
+#      region: "{{ ec2_region }}"
+#      command: create
+#      instance_name: "{{ rds_instance_name }}"
+#      db_engine: MySQL
+#      size: "{{ rds_size }}"
+#      instance_type: "{{ rds_db_type }}"
+#      username: "{{ rds_username }}"
+#      password: "{{ rds_password }}"
+#      backup_retention: "{{ rds_backup_retention }}"
+#      db_name: "{{ rds_db_name }}"
+#      multi_zone: true
+#      subnet: "{{ rds_subnet_name }}"
+#      port: "{{ rds_db_port }}"
+#      vpc_security_groups: "{{ sec_groups.results[1].group_id }}"
+#      wait: true
+#      wait_timeout: 1500
+
+#   - name: Get RDS facts
+#     rds:
+#      region: "{{ ec2_region }}"
+#      command: facts
+#      instance_name: "{{ rds_instance_name }}"
+#     register: rds_facts
+
+   - name: Create the NAT Instance's in Zone 1 for this vpc 
+     ec2:
+      region: "{{ ec2_region }}"
+      keypair: "{{ keypair }}"
+      assign_public_ip: true
+      instance_type: "{{ instance_type_nat }}"
+      image: "{{ image_id_nat }}"
+      vpc_subnet_id: "{{ maps['public'].split(',')[0] }}"
+      wait: true
+      instance_tags:
+        Name: "{{ environ + '_NAT_server1' }}"
+        Owner: "{{ environ + '_Infrastructure_Engineering' }}"
+        Role: "{{ environ + '_AWS_NAT_server' }}"
+        Environment: "{{ environ }}"
+        Stack: "Public"
+      exact_count: "{{ exact_count }}"
+      count_tag:
+        Name: "{{ environ + '_NAT_server1' }}"
+      group: "{{ vpc_security_groups[1].name }}"
+     register: ec2_zone1
+   
+
+   - name: Create the NAT Instance's in Zone 2 for this vpc
+     ec2:
+      region: "{{ ec2_region }}"
+      keypair: "{{ keypair }}"
+      assign_public_ip: true
+      instance_type: "{{ instance_type_nat }}"
+      image: "{{ image_id_nat }}"
+      vpc_subnet_id: "{{ maps['public'].split(',')[1] }}"
+      wait: true
+      instance_tags:
+        Name: "{{ environ + '_NAT_server2' }}"
+        Owner: "{{ environ + '_Infrastructure_Engineering' }}"
+        Role: "{{ environ + '_AWS_NAT_server' }}"
+        Environment: "{{ environ }}"
+        Stack: "Public"
+      exact_count: "{{ exact_count }}"
+      count_tag:
+        Name: "{{ environ + '_NAT_server2' }}"
+      group: "{{ vpc_security_groups[1].name }}"
+     register: ec2_zone2
+
+   - name: Wait for the NAT Instance's ssh to be ready
+     wait_for: host={{ item.public_ip }} port=22 state=started
+     with_flattened:
+        - ec2_zone1.tagged_instances 
+        - ec2_zone2.tagged_instances 
+
+   - name: Add the dynamic inventory
+     add_host: hostname={{ item.public_ip }} groups=natservers
+     with_flattened:
+        - ec2_zone1.tagged_instances 
+        - ec2_zone2.tagged_instances 
+
+
+
+
+   - name: Create the APACHE Instance's in Zone 1 for this vpc 
+     ec2:
+      region: "{{ ec2_region }}"
+      keypair: "{{ keypair }}"
+      assign_public_ip: true
+      instance_type: "{{ instance_type_apache }}"
+      image: "{{ image_id_apache }}"
+      vpc_subnet_id: "{{ maps['private'].split(',')[0] }}"
+      wait: true
+      instance_tags:
+        Name: "{{ environ + '_APACHE_server1' }}"
+        Owner: "{{ environ + '_Infrastructure_Engineering' }}"
+        Role: "{{ environ + '_APACHE_server' }}"
+        Environment: "{{ environ }}"
+        Stack: "Private"
+      exact_count: "{{ exact_count }}"
+      count_tag:
+        Name: "{{ environ + '_APACHE_server1' }}"
+      group: "{{ vpc_security_groups[2].name }}"
+     register: ec2_zone1
+   
+
+   - name: Create the APACHE Instance's in Zone 2 for this vpc
+     ec2:
+      region: "{{ ec2_region }}"
+      keypair: "{{ keypair }}"
+      assign_public_ip: true
+      instance_type: "{{ instance_type_apache }}"
+      image: "{{ image_id_apache }}"
+      vpc_subnet_id: "{{ maps['private'].split(',')[1] }}"
+      wait: true
+      instance_tags:
+        Name: "{{ environ + '_APACHE_server2' }}"
+        Owner: "{{ environ + '_Infrastructure_Engineering' }}"
+        Role: "{{ environ + '_APACHE_server' }}"
+        Environment: "{{ environ }}"
+        Stack: "Private"
+      exact_count: "{{ exact_count }}"
+      count_tag:
+        Name: "{{ environ + '_APACHE_server2' }}"
+      group: "{{ vpc_security_groups[2].name }}"
+     register: ec2_zone2
+
+# Below commented out as no direct internet connectivity to APACHE instances
+#   - name: Wait for the APACHE Instance's ssh to be ready
+#     wait_for: host={{ item.public_ip }} port=22 state=started
+#     with_flattened:
+#        - ec2_zone1.tagged_instances 
+#        - ec2_zone2.tagged_instances 
+
+   - name: Add the dynamic inventory
+     add_host: hostname={{ item.public_ip }} groups=apacheservers
+     with_flattened:
+        - ec2_zone1.tagged_instances 
+        - ec2_zone2.tagged_instances   
+
+
+- hosts: apacheservers
+  remote_user: ec2-user
+  vars: 
+   environ: opstesting
+  pre_tasks:
+   - ec2_facts:
+     register: foo
+   - name: Include the variables specific to the vpc
+     include_vars: envs/{{ environ }}
+#  roles:
+#   - common
+#   - base-apache
+#   - web
+  post_tasks:
+   - name: Instance Register
+     local_action: ec2_elb
+     args:
+      region: "{{ ec2_region }}"
+      instance_id: "{{ ansible_ec2_instance_id }}"
+      ec2_elbs: "{{ vpc_pub_lb_name }}"
+      state: 'present'
+
+   
