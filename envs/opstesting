@@ -1,0 +1,117 @@
+---
+# The variables for this specific vpc environment
+
+vpc_cidr_block: 10.1.0.0/16
+vpc_subnets:
+    - cidr: 10.1.1.0/24
+      az: us-east-1a
+      resource_tags: { "Name":"us-east-1a Public", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "Public"}
+    - cidr: 10.1.2.0/24
+      az: us-east-1b
+      resource_tags: { "Name":"us-east-1b Public", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "Public"}
+    - cidr: 10.1.3.0/24
+      az: us-east-1a
+      resource_tags: { "Name":"us-east-1a Private", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "Private"}
+    - cidr: 10.1.4.0/24
+      az: us-east-1b
+      resource_tags: { "Name":"us-east-1b Private", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "Private"}
+    - cidr: 10.1.5.0/24
+      az: us-east-1a
+      resource_tags: { "Name":"us-east-1a RDS DB", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "RDS DB Subnet"}
+    - cidr: 10.1.6.0/24
+      az: us-east-1b
+      resource_tags: { "Name":"us-east-1b RDS DB", "Owner":"OPS_Testing_Infrastructure_Engineering", "Stack" : "RDS DB Subnet"}
+vpc_internet_gateway: "yes"
+vpc_route_tables_public:
+    - subnets:
+       - 10.1.1.0/24
+      routes:
+       - dest: 0.0.0.0/0
+         gw: igw
+    - subnets:
+       - 10.1.2.0/24
+      routes:
+       - dest: 0.0.0.0/0
+         gw: igw
+
+
+# The variable for configuring security group and their ingress rules
+
+vpc_security_groups:
+  - name: OPSTesting-PUBLIC-ELB-WEB-FRONTEND
+    desc: the security group for the public facing ELB traffic
+    rules:  
+      - proto: tcp
+        from_port: 80
+        to_port: 80
+        cidr_ip: 0.0.0.0/0
+  
+  - name: OPSTesting-NAT-Public
+    desc: the security group for the public NAT servers
+    rules:  
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: 0.0.0.0/0
+  
+  - name: OPSTesting-APACHE-Private
+    desc: the security group for the Apache web servers attached to Public ELB
+    rules:
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: 0.0.0.0/0
+
+
+# The variables for the Loadbalancer
+
+vpc_pub_lb_name: OPSTesting-pub-lb
+vpc_pub_lb_cross_az_lb: yes
+vpc_pub_lb_con_draining: 60
+vpc_pub_lb_listeners:
+  - protocol: http
+    load_balancer_port: 80
+    instance_port: 80
+    instance_protocol: http
+vpc_pub_lb_health_check:
+    ping_protocol: http 
+    ping_port: 80
+    ping_path: "/" 
+    response_timeout: 2
+    interval: 5
+    unhealthy_threshold: 2
+    healthy_threshold: 10
+
+
+# Parameters for the NAT Instances to be created in this environment.
+# https://console.aws.amazon.com/ec2/v2/home?region=us-east-1#Images:visibility=public-images;search=ami-224dc94a;sort=name
+# 1 EC2 Instance per AZ
+
+instance_type_nat: m1.small
+image_id_nat: ami-224dc94a
+keypair: REMOVED
+exact_count: 1
+
+# Parameters for the APACHE Instances to be created in this environment.
+# https://console.aws.amazon.com/ec2/v2/home?region=us-east-1#Images:visibility=public-images;search=ami-04cf5c6d;sort=name
+# 1 EC2 Instance per AZ
+
+instance_type_apache: m1.small
+image_id_apache: ami-04cf5c6d
+keypair: REMOVED
+exact_count: 1
+
+
+#Parameters for the RDS Instance
+
+rds_subnet_name: rds-subnet
+rds_subnet_description: "RDS Subnet Group"
+#rds_instance_name: "mysql-OPSTesting"
+#rds_size: 10
+#rds_db_type: "db.m1.small"
+#rds_username: "mysql_admin"
+#rds_password: 1nsecure
+#rds_backup_retention: 0
+#rds_db_name: mydb
+#rds_db_port: 3306
+
